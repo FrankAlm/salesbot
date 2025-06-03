@@ -11,7 +11,6 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// 📞 Einstiegspunkt von Twilio
 app.post('/twilio-entry', (req, res) => {
   const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
     .ele('Response')
@@ -32,7 +31,6 @@ app.post('/twilio-entry', (req, res) => {
   res.send(responseXml);
 });
 
-// 🧠 Bot-Logik nach Aufnahme
 app.post('/agent/offer_igniter', async (req, res) => {
   const audioUrl = req.body.RecordingUrl;
   const config = {
@@ -43,8 +41,16 @@ app.post('/agent/offer_igniter', async (req, res) => {
   console.log("📥 Recording URL erhalten:", audioUrl);
 
   try {
-    const audioBuffer = await tryDownloadAudioWithRetry(audioUrl + ".wav", 3, 1000);
-    console.log("✅ Audio erfolgreich geladen.");
+    if (!audioUrl) throw new Error("Keine RecordingUrl erhalten.");
+
+    const fullAudioUrl = audioUrl + ".wav";
+    console.log("🔊 Lade Audio von:", fullAudioUrl);
+    const audioBuffer = (await axios.get(fullAudioUrl, {
+      responseType: 'arraybuffer',
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_TOKEN}`).toString('base64')}`
+      }
+    })).data;
 
     const transcript = await transcribe(audioBuffer);
     console.log("📝 Transkript:", transcript);
@@ -53,7 +59,7 @@ app.post('/agent/offer_igniter', async (req, res) => {
     console.log("🤖 GPT-Antwort:", reply);
 
     const spokenUrl = await speak(reply, config.voice_id);
-    console.log("🔊 Audio-Antwort URL:", spokenUrl);
+    console.log("🗣️ Audio-URL:", spokenUrl);
 
     const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('Response')
@@ -62,29 +68,23 @@ app.post('/agent/offer_igniter', async (req, res) => {
 
     res.type('text/xml');
     res.send(responseXml);
+
   } catch (err) {
-    console.error("❌ Fehler im Bot:", err.message);
-    res.status(500).send('<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>');
+    console.error("❌ Fehler im Bot:", err.message || err);
+
+    const debugMessage = err.message || "Unbekannter Fehler";
+    const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
+      .ele('Response')
+        .ele('Say')
+          .att('voice', 'alice')
+          .att('language', 'de-DE')
+          .txt("Fehler: " + debugMessage)
+      .end({ prettyPrint: true });
+
+    res.type('text/xml');
+    res.send(responseXml);
   }
 });
-
-// 🕒 Retry-Logik für verzögertes Audio von Twilio
-async function tryDownloadAudioWithRetry(url, retries = 3, delayMs = 1000) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const response = await axios.get(url, { responseType: 'arraybuffer' });
-      return response.data;
-    } catch (err) {
-      console.warn(`⚠️ Versuch ${i + 1} fehlgeschlagen: ${err.message}`);
-      if (i < retries - 1) await wait(delayMs);
-    }
-  }
-  throw new Error("Audio konnte nicht heruntergeladen werden.");
-}
-
-function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
