@@ -1,17 +1,17 @@
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
-const axios = require('axios');
 const { transcribe } = require('./deepgram');
 const { askGPT } = require('./gpt');
 const { speak } = require('./elevenlabs');
 const { create } = require('xmlbuilder2');
+const axios = require('axios');
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// ✅ Einstiegspunkt für Twilio
+// 👉 TwiML-Einstiegspunkt für Twilio
 app.post('/twilio-entry', (req, res) => {
   const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
     .ele('Response')
@@ -32,33 +32,34 @@ app.post('/twilio-entry', (req, res) => {
   res.send(responseXml);
 });
 
-// ✅ Bot-Logik nach Aufnahme
+// 👉 Der eigentliche Bot-Endpunkt
 app.post('/agent/offer_igniter', async (req, res) => {
   const audioUrl = req.body.RecordingUrl;
   const config = {
-    voice_id: "voice_id_abc", // ❗ Ersetze durch echte ElevenLabs-Voice-ID
+    voice_id: "voice_id_abc", // 🛠️ Deine ElevenLabs Voice-ID hier eintragen
     prompt: "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell."
   };
 
-  try {
-    console.log(`📥 Recording URL erhalten: ${audioUrl}`);
-    const fullAudioUrl = audioUrl; // ❗ FIX: Kein ".wav" mehr anhängen!
-    console.log(`🔊 Lade Audio von: ${fullAudioUrl}`);
+  console.log("📥 Recording URL erhalten:", audioUrl);
 
-    const audioBuffer = (await axios.get(fullAudioUrl, {
+  try {
+    // 🔐 Twilio Basic Auth für Audiozugriff
+    const audioBuffer = (await axios.get(audioUrl + ".wav", {
+      responseType: 'arraybuffer',
       auth: {
         username: process.env.TWILIO_ACCOUNT_SID,
         password: process.env.TWILIO_AUTH_TOKEN
-      },
-      responseType: 'arraybuffer'
+      }
     })).data;
 
+    console.log("🎙️ Transkribiere...");
     const transcript = await transcribe(audioBuffer);
-    const reply = await askGPT(transcript, config.prompt);
-    const spokenUrl = await speak(reply, config.voice_id);
 
-    console.log(`🧠 GPT: ${reply}`);
-    console.log(`🔈 Generierte Sprachausgabe: ${spokenUrl}`);
+    console.log("💬 GPT antwortet...");
+    const reply = await askGPT(transcript, config.prompt);
+
+    console.log("🔊 Generiere Sprachantwort...");
+    const spokenUrl = await speak(reply, config.voice_id);
 
     const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('Response')
@@ -68,8 +69,8 @@ app.post('/agent/offer_igniter', async (req, res) => {
     res.type('text/xml');
     res.send(responseXml);
   } catch (err) {
-    console.error("❌ Fehler im Bot:", err);
-    res.status(500).send(`<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>`);
+    console.error("❌ Fehler im Bot:", err.message || err);
+    res.status(500).send("<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>");
   }
 });
 
