@@ -4,7 +4,7 @@ const bodyParser = require('body-parser');
 const { transcribe } = require('./deepgram');
 const { askGPT } = require('./gpt');
 const { speak } = require('./elevenlabs');
-const { xml } = require('xmlbuilder2');
+const { create } = require('xmlbuilder2'); // <- Korrektur hier!
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -12,18 +12,20 @@ app.use(bodyParser.json());
 
 // Neuer TwiML-Einstiegspunkt für Twilio
 app.post('/twilio-entry', (req, res) => {
-  const responseXml = xml({
-    Response: {
-      Say: { '@voice': 'alice', '@language': 'de-DE', '#': 'Bitte sprechen Sie jetzt. Ich höre zu.' },
-      Pause: { '@length': '1' },
-      Record: {
-        '@action': '/agent/offer_igniter',
-        '@method': 'POST',
-        '@maxLength': '10',
-        '@playBeep': 'true'
-      }
-    }
-  }).end({ prettyPrint: true });
+  const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
+    .ele('Response')
+      .ele('Say')
+        .att('voice', 'alice')
+        .att('language', 'de-DE')
+        .txt('Bitte sprechen Sie jetzt. Ich höre zu.')
+      .up()
+      .ele('Pause').att('length', '1').up()
+      .ele('Record')
+        .att('action', '/agent/offer_igniter')
+        .att('method', 'POST')
+        .att('maxLength', '10')
+        .att('playBeep', 'true')
+    .end({ prettyPrint: true });
 
   res.type('text/xml');
   res.send(responseXml);
@@ -33,7 +35,7 @@ app.post('/twilio-entry', (req, res) => {
 app.post('/agent/offer_igniter', async (req, res) => {
   const audioUrl = req.body.RecordingUrl;
   const config = {
-    voice_id: "voice_id_abc",
+    voice_id: "voice_id_abc", // <- Setze hier deinen echten ElevenLabs-Voice-ID ein!
     prompt: "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell."
   };
 
@@ -45,11 +47,11 @@ app.post('/agent/offer_igniter', async (req, res) => {
     const reply = await askGPT(transcript, config.prompt);
     const spokenUrl = await speak(reply, config.voice_id);
 
-    const responseXml = xml({
-      Response: {
-        Play: spokenUrl
-      }
-    }).end({ prettyPrint: true });
+    const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
+      .ele('Response')
+        .ele('Play')
+          .txt(spokenUrl)
+      .end({ prettyPrint: true });
 
     res.type('text/xml');
     res.send(responseXml);
