@@ -1,83 +1,70 @@
-require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
-const { transcribe } = require('./deepgram');
-const { askGPT } = require('./gpt');
-const { speak } = require('./elevenlabs');
-const { create } = require('xmlbuilder2');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const FormData = require('form-data');
+require('dotenv').config();
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
 
-// Einstiegspunkt für Twilio
-app.post('/twilio-entry', (req, res) => {
-  const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
-    .ele('Response')
-      .ele('Say')
-        .att('voice', 'alice')
-        .att('language', 'de-DE')
-        .txt('Bitte sprechen Sie jetzt. Ich höre zu.')
-      .up()
-      .ele('Pause').att('length', '1').up()
-      .ele('Record')
-        .att('action', '/agent/offer_igniter')
-        .att('method', 'POST')
-        .att('maxLength', '10')
-        .att('playBeep', 'true')
-    .end({ prettyPrint: true });
+const PORT = process.env.PORT || 10000;
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const GPT_API_URL = process.env.GPT_API_URL;
 
+app.post('/voice', (req, res) => {
+  const twiml = `
+    <Response>
+      <Say>Hallo! Du sprichst mit dem automatisierten SalesBot. Bitte sag mir, was du suchst.</Say>
+      <Record timeout="5" maxLength="30" playBeep="true" />
+      <Say>Danke für deine Nachricht. Wir melden uns gleich bei dir.</Say>
+    </Response>
+  `;
   res.type('text/xml');
-  res.send(responseXml);
+  res.send(twiml);
 });
 
-// Bot-Logik
-app.post('/agent/offer_igniter', async (req, res) => {
-  const audioUrl = req.body.RecordingUrl;
-  const config = {
-    voice_id: process.env.ELEVEN_VOICE_ID,
-    prompt: "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell."
-  };
+app.post('/recording', async (req, res) => {
+  const recordingUrl = req.body.RecordingUrl;
+  const callSid = req.body.CallSid || uuidv4();
+
+  console.log(`📥 Recording URL erhalten: ${recordingUrl}`);
 
   try {
-    console.log("📥 Recording URL erhalten:", audioUrl);
-
-    const audioBuffer = (await axios.get(audioUrl + ".wav", {
+    const audioUrl = `${recordingUrl}.wav`;
+    const audioResponse = await axios.get(audioUrl, {
       responseType: 'arraybuffer',
       auth: {
-        username: process.env.TWILIO_ACCOUNT_SID,
-        password: process.env.TWILIO_AUTH_TOKEN
+        username: TWILIO_ACCOUNT_SID,
+        password: TWILIO_AUTH_TOKEN
       }
-    })).data;
+    });
 
-    console.log("🔊 Audio erfolgreich geladen");
+    const filePath = path.join(__dirname, 'recordings', `${callSid}.wav`);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, audioResponse.data);
+    console.log(`🎧 Audio gespeichert unter: ${filePath}`);
 
-    const transcript = await transcribe(audioBuffer);
-    console.log("📝 Transkript:", transcript);
+    const form = new FormData();
+    form.append('file', fs.createReadStream(filePath));
+    form.append('callSid', callSid);
 
-    const reply = await askGPT(transcript, config.prompt);
-    console.log("🤖 GPT-Antwort:", reply);
+    const gptResponse = await axios.post(GPT_API_URL, form, {
+      headers: form.getHeaders()
+    });
 
-    const spokenUrl = await speak(reply, config.voice_id);
-    console.log("🔊 Sprach-URL:", spokenUrl);
+    console.log('✅ GPT-Antwort:', gptResponse.data);
 
-    const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
-      .ele('Response')
-        .ele('Play')
-          .txt(spokenUrl)
-      .end({ prettyPrint: true });
-
-    res.type('text/xml');
-    res.send(responseXml);
-  } catch (err) {
-    console.error("❌ Fehler im Bot:", err.message);
-    console.error(err);
-    res.status(500).send("<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>");
+  } catch (error) {
+    console.error('❌ Fehler im Bot:', error.message);
   }
+
+  res.sendStatus(200);
 });
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 SalesBot mit TwiML läuft auf Port ${PORT}`);
 });
