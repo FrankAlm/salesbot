@@ -1,6 +1,6 @@
 {
   "name": "salesbot-offer-igniter",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Telefon-SalesBot nur für Offer Igniter mit TwiML Unterstützung",
   "main": "server.js",
   "scripts": {
