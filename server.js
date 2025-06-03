@@ -11,7 +11,7 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// 🔊 TwiML-Einstiegspunkt: Wird aufgerufen, wenn ein Anruf eingeht
+// 📞 Einstiegspunkt von Twilio
 app.post('/twilio-entry', (req, res) => {
   const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
     .ele('Response')
@@ -32,49 +32,59 @@ app.post('/twilio-entry', (req, res) => {
   res.send(responseXml);
 });
 
-// 🤖 Bot-Endpunkt: Wird von Twilio nach Aufnahme aufgerufen
+// 🧠 Bot-Logik nach Aufnahme
 app.post('/agent/offer_igniter', async (req, res) => {
   const audioUrl = req.body.RecordingUrl;
   const config = {
-    voice_id: "voice_id_abc", // <- Ersetze mit echter ElevenLabs-ID!
+    voice_id: process.env.ELEVEN_VOICE_ID || "voice_id_abc",
     prompt: "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell."
   };
 
+  console.log("📥 Recording URL erhalten:", audioUrl);
+
   try {
-    console.log("📥 Recording URL erhalten:", audioUrl);
+    const audioBuffer = await tryDownloadAudioWithRetry(audioUrl + ".wav", 3, 1000);
+    console.log("✅ Audio erfolgreich geladen.");
 
-    const audioBuffer = (await axios.get(audioUrl + ".wav", {
-      responseType: 'arraybuffer',
-      auth: {
-        username: process.env.TWILIO_ACCOUNT_SID,
-        password: process.env.TWILIO_AUTH_TOKEN
-      }
-    })).data;
-
-    console.log("🎧 Audio geladen. Sende an Deepgram...");
     const transcript = await transcribe(audioBuffer);
+    console.log("📝 Transkript:", transcript);
 
-    console.log("🧠 Transkript:", transcript);
     const reply = await askGPT(transcript, config.prompt);
+    console.log("🤖 GPT-Antwort:", reply);
 
-    console.log("🗣 GPT-Antwort:", reply);
     const spokenUrl = await speak(reply, config.voice_id);
-
-    console.log("🔊 Generierte Audio-URL:", spokenUrl);
+    console.log("🔊 Audio-Antwort URL:", spokenUrl);
 
     const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('Response')
-        .ele('Play')
-          .txt(spokenUrl)
+        .ele('Play').txt(spokenUrl)
       .end({ prettyPrint: true });
 
     res.type('text/xml');
     res.send(responseXml);
   } catch (err) {
     console.error("❌ Fehler im Bot:", err.message);
-    res.status(500).send("<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>");
+    res.status(500).send('<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>');
   }
 });
+
+// 🕒 Retry-Logik für verzögertes Audio von Twilio
+async function tryDownloadAudioWithRetry(url, retries = 3, delayMs = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await axios.get(url, { responseType: 'arraybuffer' });
+      return response.data;
+    } catch (err) {
+      console.warn(`⚠️ Versuch ${i + 1} fehlgeschlagen: ${err.message}`);
+      if (i < retries - 1) await wait(delayMs);
+    }
+  }
+  throw new Error("Audio konnte nicht heruntergeladen werden.");
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
