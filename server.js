@@ -11,7 +11,7 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// 👉 TwiML-Einstiegspunkt für Twilio
+// 🎯 Einstiegspunkt für Twilio: Ansage + Aufnahme starten
 app.post('/twilio-entry', (req, res) => {
   const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
     .ele('Response')
@@ -32,49 +32,55 @@ app.post('/twilio-entry', (req, res) => {
   res.send(responseXml);
 });
 
-// 👉 Der eigentliche Bot-Endpunkt
+// 🤖 Der KI-Agent: Verarbeitung der Audiodatei + Antwort
 app.post('/agent/offer_igniter', async (req, res) => {
   const audioUrl = req.body.RecordingUrl;
   const config = {
-    voice_id: "voice_id_abc", // 🛠️ Deine ElevenLabs Voice-ID hier eintragen
+    voice_id: process.env.ELEVENLABS_VOICE_ID || "voice_id_abc",
     prompt: "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell."
   };
 
   console.log("📥 Recording URL erhalten:", audioUrl);
+  console.log("⏳ Warte 2 Sekunden auf Twilio-Processing...");
 
-  try {
-    // 🔐 Twilio Basic Auth für Audiozugriff
-    const audioBuffer = (await axios.get(audioUrl + ".wav", {
-      responseType: 'arraybuffer',
-      auth: {
-        username: process.env.TWILIO_ACCOUNT_SID,
-        password: process.env.TWILIO_AUTH_TOKEN
-      }
-    })).data;
+  // Wartezeit für Twilio-Upload (sonst kommt 404)
+  setTimeout(async () => {
+    try {
+      const audioBuffer = (await axios.get(audioUrl + ".wav", {
+        responseType: 'arraybuffer',
+        auth: {
+          username: process.env.TWILIO_ACCOUNT_SID,
+          password: process.env.TWILIO_AUTH_TOKEN
+        }
+      })).data;
 
-    console.log("🎙️ Transkribiere...");
-    const transcript = await transcribe(audioBuffer);
+      const transcript = await transcribe(audioBuffer);
+      console.log("📝 Transkript:", transcript);
 
-    console.log("💬 GPT antwortet...");
-    const reply = await askGPT(transcript, config.prompt);
+      const reply = await askGPT(transcript, config.prompt);
+      console.log("🤖 GPT-Antwort:", reply);
 
-    console.log("🔊 Generiere Sprachantwort...");
-    const spokenUrl = await speak(reply, config.voice_id);
+      const spokenUrl = await speak(reply, config.voice_id);
+      console.log("🔊 Sprachdatei-URL:", spokenUrl);
 
-    const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
-      .ele('Response')
-        .ele('Play').txt(spokenUrl)
-      .end({ prettyPrint: true });
+      const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
+        .ele('Response')
+          .ele('Play')
+            .txt(spokenUrl)
+        .end({ prettyPrint: true });
 
-    res.type('text/xml');
-    res.send(responseXml);
-  } catch (err) {
-    console.error("❌ Fehler im Bot:", err.message || err);
-    res.status(500).send("<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>");
-  }
+      res.type('text/xml');
+      res.send(responseXml);
+    } catch (innerErr) {
+      console.error("❌ Fehler im inneren Ablauf:", innerErr.message);
+      res.status(500).send("<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>");
+    }
+  }, 2000); // 2 Sekunden Verzögerung
+
 });
 
-const PORT = process.env.PORT || 3000;
+// 🟢 Serverstart
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 SalesBot mit TwiML läuft auf Port ${PORT}`);
 });
