@@ -11,7 +11,7 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// 🎯 Einstiegspunkt für Twilio: Ansage + Aufnahme starten
+// Twilio-Einstiegspunkt
 app.post('/twilio-entry', (req, res) => {
   const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
     .ele('Response')
@@ -32,54 +32,67 @@ app.post('/twilio-entry', (req, res) => {
   res.send(responseXml);
 });
 
-// 🤖 Der KI-Agent: Verarbeitung der Audiodatei + Antwort
+// Bot-Endpunkt mit robustem Retry
 app.post('/agent/offer_igniter', async (req, res) => {
   const audioUrl = req.body.RecordingUrl;
   const config = {
-    voice_id: process.env.ELEVENLABS_VOICE_ID || "voice_id_abc",
+    voice_id: process.env.ELEVENLABS_VOICE_ID, // in .env definiert
     prompt: "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell."
   };
 
-  console.log("📥 Recording URL erhalten:", audioUrl);
-  console.log("⏳ Warte 2 Sekunden auf Twilio-Processing...");
+  console.log("📥 Recording URL erhalten:", audioUrl + ".wav");
 
-  // Wartezeit für Twilio-Upload (sonst kommt 404)
-  setTimeout(async () => {
-    try {
-      const audioBuffer = (await axios.get(audioUrl + ".wav", {
-        responseType: 'arraybuffer',
-        auth: {
-          username: process.env.TWILIO_ACCOUNT_SID,
-          password: process.env.TWILIO_AUTH_TOKEN
-        }
-      })).data;
+  try {
+    // Audio-Datei mit Retry laden
+    const maxRetries = 5;
+    let attempt = 0;
+    let audioBuffer = null;
 
-      const transcript = await transcribe(audioBuffer);
-      console.log("📝 Transkript:", transcript);
+    while (attempt < maxRetries) {
+      try {
+        const response = await axios.get(audioUrl + ".wav", {
+          responseType: 'arraybuffer',
+          auth: {
+            username: process.env.TWILIO_ACCOUNT_SID,
+            password: process.env.TWILIO_AUTH_TOKEN
+          }
+        });
 
-      const reply = await askGPT(transcript, config.prompt);
-      console.log("🤖 GPT-Antwort:", reply);
-
-      const spokenUrl = await speak(reply, config.voice_id);
-      console.log("🔊 Sprachdatei-URL:", spokenUrl);
-
-      const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
-        .ele('Response')
-          .ele('Play')
-            .txt(spokenUrl)
-        .end({ prettyPrint: true });
-
-      res.type('text/xml');
-      res.send(responseXml);
-    } catch (innerErr) {
-      console.error("❌ Fehler im inneren Ablauf:", innerErr.message);
-      res.status(500).send("<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>");
+        audioBuffer = response.data;
+        console.log("✅ Audio erfolgreich geladen beim Versuch", attempt + 1);
+        break;
+      } catch (err) {
+        attempt++;
+        console.warn(`⚠️ Versuch ${attempt} fehlgeschlagen: ${err.response?.status || err.message}`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     }
-  }, 2000); // 2 Sekunden Verzögerung
 
+    if (!audioBuffer) {
+      console.error("❌ Audio konnte nicht geladen werden.");
+      return res.status(500).send("<Response><Say>Die Audioaufnahme konnte nicht verarbeitet werden.</Say></Response>");
+    }
+
+    // Verarbeitung
+    const transcript = await transcribe(audioBuffer);
+    const reply = await askGPT(transcript, config.prompt);
+    const spokenUrl = await speak(reply, config.voice_id);
+
+    const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
+      .ele('Response')
+        .ele('Play')
+          .txt(spokenUrl)
+      .end({ prettyPrint: true });
+
+    res.type('text/xml');
+    res.send(responseXml);
+
+  } catch (err) {
+    console.error("❌ Fehler im Bot:", err);
+    res.status(500).send("<Response><Say>Ein interner Fehler ist aufgetreten.</Say></Response>");
+  }
 });
 
-// 🟢 Serverstart
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 SalesBot mit TwiML läuft auf Port ${PORT}`);
