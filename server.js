@@ -1,17 +1,17 @@
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
+const axios = require('axios');
 const { transcribe } = require('./deepgram');
 const { askGPT } = require('./gpt');
 const { speak } = require('./elevenlabs');
 const { create } = require('xmlbuilder2');
-const axios = require('axios');
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Neuer TwiML-Einstiegspunkt für Twilio
+// Twilio-Einstiegspunkt
 app.post('/twilio-entry', (req, res) => {
   const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
     .ele('Response')
@@ -32,32 +32,36 @@ app.post('/twilio-entry', (req, res) => {
   res.send(responseXml);
 });
 
-// Der eigentliche Bot-Endpunkt
+// Bot-Antwort-Endpoint
 app.post('/agent/offer_igniter', async (req, res) => {
-  const audioUrl = req.body.RecordingUrl;
-  const config = {
-    voice_id: "voice_id_abc", // <- Hier deine echte ElevenLabs Voice ID eintragen!
-    prompt: "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell."
-  };
-
   try {
+    const audioUrl = req.body.RecordingUrl;
+    console.log("📥 Recording URL erhalten:", audioUrl);
+
     if (!audioUrl) {
-      throw new Error("Keine RecordingUrl empfangen.");
+      throw new Error("Keine RecordingUrl übermittelt!");
     }
 
-    console.log("Audio URL erhalten:", audioUrl);
+    const fullAudioUrl = `${audioUrl}.wav`;
+    console.log("🔊 Lade Audio von:", fullAudioUrl);
 
-    const response = await axios.get(audioUrl + ".wav", { responseType: 'arraybuffer' });
-    const audioBuffer = response.data;
+    const audioResponse = await axios.get(fullAudioUrl, { responseType: 'arraybuffer' });
+    const audioBuffer = audioResponse.data;
 
+    console.log("🎙 Starte Transkription...");
     const transcript = await transcribe(audioBuffer);
-    console.log("Transkribiert:", transcript);
+    console.log("📝 Transkription:", transcript);
 
-    const reply = await askGPT(transcript, config.prompt);
-    console.log("GPT-Antwort:", reply);
+    const prompt = "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell.";
+    const voiceId = "21m00Tcm4TlvDq8ikWAM"; // Beispiel: Rachel (ersetzen!)
 
-    const spokenUrl = await speak(reply, config.voice_id);
-    console.log("Sprach-URL:", spokenUrl);
+    console.log("💬 Frage an GPT...");
+    const reply = await askGPT(transcript, prompt);
+    console.log("🤖 GPT-Antwort:", reply);
+
+    console.log("🗣 Erzeuge Sprachausgabe...");
+    const spokenUrl = await speak(reply, voiceId);
+    console.log("🔗 Audio-URL:", spokenUrl);
 
     const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('Response')
@@ -69,21 +73,13 @@ app.post('/agent/offer_igniter', async (req, res) => {
     res.send(responseXml);
 
   } catch (err) {
-    console.error("Fehler im Bot-Endpunkt:", err);
-    const fallbackXml = create({ version: '1.0', encoding: 'UTF-8' })
-      .ele('Response')
-        .ele('Say')
-          .att('voice', 'alice')
-          .att('language', 'de-DE')
-          .txt('Es ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut.')
-      .end({ prettyPrint: true });
-
-    res.type('text/xml');
-    res.status(200).send(fallbackXml);
+    console.error("❌ Fehler im Bot:", err.message);
+    res.status(500).send(`<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>`);
   }
 });
 
+// Server starten
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`SalesBot mit TwiML läuft auf Port ${PORT}`);
+  console.log(`🚀 SalesBot mit TwiML läuft auf Port ${PORT}`);
 });
