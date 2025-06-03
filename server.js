@@ -1,17 +1,17 @@
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
-const axios = require('axios');
 const { transcribe } = require('./deepgram');
 const { askGPT } = require('./gpt');
 const { speak } = require('./elevenlabs');
 const { create } = require('xmlbuilder2');
+const axios = require('axios');
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Twilio-Einstiegspunkt
+// Einstiegspunkt für Twilio (TwiML)
 app.post('/twilio-entry', (req, res) => {
   const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
     .ele('Response')
@@ -32,37 +32,41 @@ app.post('/twilio-entry', (req, res) => {
   res.send(responseXml);
 });
 
-// Bot-Antwort-Endpoint
+// Der eigentliche Bot-Endpunkt
 app.post('/agent/offer_igniter', async (req, res) => {
   try {
-    const audioUrl = req.body.RecordingUrl;
-    console.log("📥 Recording URL erhalten:", audioUrl);
+    const recordingUrl = req.body.RecordingUrl;
+    const fullAudioUrl = recordingUrl + ".wav";
+    console.log("📥 Recording URL erhalten:", fullAudioUrl);
 
-    if (!audioUrl) {
-      throw new Error("Keine RecordingUrl übermittelt!");
-    }
-
-    const fullAudioUrl = `${audioUrl}.wav`;
+    // Audio herunterladen mit Twilio Auth
     console.log("🔊 Lade Audio von:", fullAudioUrl);
+    const audioResponse = await axios.get(fullAudioUrl, {
+      responseType: 'arraybuffer',
+      auth: {
+        username: process.env.TWILIO_ACCOUNT_SID,
+        password: process.env.TWILIO_AUTH_TOKEN
+      }
+    });
 
-    const audioResponse = await axios.get(fullAudioUrl, { responseType: 'arraybuffer' });
     const audioBuffer = audioResponse.data;
 
-    console.log("🎙 Starte Transkription...");
+    // Bot-Konfiguration
+    const config = {
+      voice_id: "voice_id_abc", // <- Ersetze durch echte ElevenLabs Voice ID
+      prompt: "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell."
+    };
+
     const transcript = await transcribe(audioBuffer);
-    console.log("📝 Transkription:", transcript);
+    console.log("📝 Transkribiert:", transcript);
 
-    const prompt = "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell.";
-    const voiceId = "21m00Tcm4TlvDq8ikWAM"; // Beispiel: Rachel (ersetzen!)
+    const reply = await askGPT(transcript, config.prompt);
+    console.log("🤖 GPT Antwort:", reply);
 
-    console.log("💬 Frage an GPT...");
-    const reply = await askGPT(transcript, prompt);
-    console.log("🤖 GPT-Antwort:", reply);
+    const spokenUrl = await speak(reply, config.voice_id);
+    console.log("🔈 Sprachantwort als URL:", spokenUrl);
 
-    console.log("🗣 Erzeuge Sprachausgabe...");
-    const spokenUrl = await speak(reply, voiceId);
-    console.log("🔗 Audio-URL:", spokenUrl);
-
+    // Antwort zurück an Twilio
     const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('Response')
         .ele('Play')
@@ -74,12 +78,11 @@ app.post('/agent/offer_igniter', async (req, res) => {
 
   } catch (err) {
     console.error("❌ Fehler im Bot:", err.message);
-    res.status(500).send(`<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>`);
+    res.status(500).send("<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>");
   }
 });
 
-// Server starten
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 SalesBot mit TwiML läuft auf Port ${PORT}`);
 });
