@@ -11,7 +11,7 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Einstiegspunkt für Twilio (TwiML)
+// 🎯 Twilio Einstiegspunkt – erster TwiML-Response
 app.post('/twilio-entry', (req, res) => {
   const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
     .ele('Response')
@@ -32,16 +32,14 @@ app.post('/twilio-entry', (req, res) => {
   res.send(responseXml);
 });
 
-// Der eigentliche Bot-Endpunkt
+// 🤖 Haupt-Bot-Logik nach Sprachaufnahme
 app.post('/agent/offer_igniter', async (req, res) => {
   try {
     const recordingUrl = req.body.RecordingUrl;
-    const fullAudioUrl = recordingUrl + ".wav";
-    console.log("📥 Recording URL erhalten:", fullAudioUrl);
+    console.log("📥 Recording URL erhalten:", recordingUrl);
 
-    // Audio herunterladen mit Twilio Auth
-    console.log("🔊 Lade Audio von:", fullAudioUrl);
-    const audioResponse = await axios.get(fullAudioUrl, {
+    // Lade Audio mit Twilio Basic Auth
+    const audioResponse = await axios.get(recordingUrl + '.wav', {
       responseType: 'arraybuffer',
       auth: {
         username: process.env.TWILIO_ACCOUNT_SID,
@@ -50,23 +48,22 @@ app.post('/agent/offer_igniter', async (req, res) => {
     });
 
     const audioBuffer = audioResponse.data;
+    console.log("🔊 Audio geladen");
 
-    // Bot-Konfiguration
-    const config = {
-      voice_id: "voice_id_abc", // <- Ersetze durch echte ElevenLabs Voice ID
-      prompt: "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell."
-    };
-
+    // Transkribieren & GPT-Antwort generieren
     const transcript = await transcribe(audioBuffer);
-    console.log("📝 Transkribiert:", transcript);
+    console.log("📝 Transkript:", transcript);
 
-    const reply = await askGPT(transcript, config.prompt);
-    console.log("🤖 GPT Antwort:", reply);
+    const prompt = "Du bist ein Verkaufsberater für das Programm Offer Igniter. Sei freundlich, überzeugend und professionell.";
+    const reply = await askGPT(transcript, prompt);
+    console.log("💬 GPT-Antwort:", reply);
 
-    const spokenUrl = await speak(reply, config.voice_id);
-    console.log("🔈 Sprachantwort als URL:", spokenUrl);
+    // Sprachausgabe generieren (Voice-ID anpassen!)
+    const voiceId = "voice_id_abc"; // <- Echte ElevenLabs Voice-ID einsetzen
+    const spokenUrl = await speak(reply, voiceId);
+    console.log("🔈 Sprachausgabe bereit:", spokenUrl);
 
-    // Antwort zurück an Twilio
+    // Sende TwiML zurück mit Sprachausgabe
     const responseXml = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('Response')
         .ele('Play')
@@ -76,13 +73,14 @@ app.post('/agent/offer_igniter', async (req, res) => {
     res.type('text/xml');
     res.send(responseXml);
 
-  } catch (err) {
-    console.error("❌ Fehler im Bot:", err.message);
+  } catch (error) {
+    console.error("❌ Fehler im Bot:", error);
     res.status(500).send("<Response><Say>Es ist ein Fehler aufgetreten.</Say></Response>");
   }
 });
 
-const PORT = process.env.PORT || 10000;
+// 🔁 Serverstart
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 SalesBot mit TwiML läuft auf Port ${PORT}`);
 });
