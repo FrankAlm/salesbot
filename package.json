@@ -1,17 +1,23 @@
 {
   "name": "salesbot-offer-igniter",
   "version": "1.0.1",
-  "description": "Telefon-SalesBot nur für Offer Igniter mit TwiML Unterstützung",
+  "description": "Twilio-Voice-SalesBot für das Offer Igniter Programm",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
+    "axios": "^1.6.7",
     "body-parser": "^1.20.2",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "openai": "^4.26.0",
-    "xmlbuilder2": "^3.0.2"
-  }
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "uuid": "^9.0.1",
+    "xmlbuilder2": "^4.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [],
+  "author": "Frank Alm",
+  "license": "MIT"
 }
